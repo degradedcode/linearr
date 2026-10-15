@@ -2295,55 +2295,7 @@ def create_franchise_playlist(
         )
         playlist_id = cur.lastrowid
 
-    row = db.get_playlist(playlist_id)
-    plex_keys, jellyfin_keys, emby_keys, missing_count = _match_franchise_to_library(
-        definition_id, playlist_id, row
-    )
-
-    log.info(
-        "Creating franchise playlist '%s': %d plex keys, %d jellyfin keys, %d emby keys, %d missing",
-        name, len(plex_keys), len(jellyfin_keys), len(emby_keys), missing_count,
-    )
-
-    # Deterministic franchise cover (TMDB) — set after each backend create so
-    # franchise playlists get a real poster rather than relying on the media
-    # server's inconsistent auto-composite. Best-effort; never blocks creation.
-    poster_list = _franchise_poster_urls(db.list_franchise_items(definition_id), limit=5)
-    poster_url = poster_list[0] if poster_list else None
-    if poster_list:
-        defn = db.get_franchise_definition_by_id(definition_id) or {}
-        raw = (defn.get("poster_urls") or "").strip()
-        try:
-            stored = len(json.loads(raw)) if raw else 0
-        except Exception:
-            stored = 0
-        if len(poster_list) > stored:
-            db.set_franchise_definition_poster(
-                definition_id, poster_url, json.dumps(poster_list))
-
-    for tb, client, pl_id in _clients_for_playlist(row):
-        backend_keys = {"plex": plex_keys, "jellyfin": jellyfin_keys, "emby": emby_keys}.get(tb, [])
-        if backend_keys:
-            try:
-                new_pl_id = client.create_playlist(name, backend_keys)
-                if tb == "plex":
-                    with db.connection() as conn2:
-                        conn2.execute(
-                            "UPDATE managed_playlists SET plex_rating_key=? WHERE id=?",
-                            (new_pl_id, playlist_id),
-                        )
-                elif tb == "jellyfin":
-                    with db.connection() as conn2:
-                        conn2.execute(
-                            "UPDATE managed_playlists SET jellyfin_playlist_id=? WHERE id=?",
-                            (new_pl_id, playlist_id),
-                        )
-                else:
-                    db.set_emby_playlist_id(playlist_id, new_pl_id)
-                if poster_url:
-                    client.set_playlist_image(new_pl_id, poster_url)
-            except Exception:
-                log.warning("Failed to create franchise playlist on %s", tb, exc_info=True)
+    log.info("Created franchise playlist '%s' (id=%d); syncing in background", name, playlist_id)
 
     try:
         _webhooks.fire(
@@ -2354,6 +2306,70 @@ def create_franchise_playlist(
         pass
 
     return playlist_id
+
+
+def _initialize_franchise_playlist_background(playlist_id: int) -> None:
+    row = db.get_playlist(playlist_id)
+    if not row:
+        log.warning("Franchise playlist %d not found", playlist_id)
+        return
+
+    definition_id = row.get("franchise_definition_id")
+    if not definition_id:
+        log.warning("Franchise playlist %d has no definition_id", playlist_id)
+        return
+
+    try:
+        plex_keys, jellyfin_keys, emby_keys, missing_count = _match_franchise_to_library(
+            definition_id, playlist_id, row
+        )
+
+        log.info(
+            "Initialized franchise playlist '%s': %d plex keys, %d jellyfin keys, %d emby keys, %d missing",
+            row["name"], len(plex_keys), len(jellyfin_keys), len(emby_keys), missing_count,
+        )
+
+        # Deterministic franchise cover (TMDB) — set after each backend create so
+        # franchise playlists get a real poster rather than relying on the media
+        # server's inconsistent auto-composite. Best-effort; never blocks creation.
+        poster_list = _franchise_poster_urls(db.list_franchise_items(definition_id), limit=5)
+        poster_url = poster_list[0] if poster_list else None
+        if poster_list:
+            defn = db.get_franchise_definition_by_id(definition_id) or {}
+            raw = (defn.get("poster_urls") or "").strip()
+            try:
+                stored = len(json.loads(raw)) if raw else 0
+            except Exception:
+                stored = 0
+            if len(poster_list) > stored:
+                db.set_franchise_definition_poster(
+                    definition_id, poster_url, json.dumps(poster_list))
+
+        for tb, client, pl_id in _clients_for_playlist(row):
+            backend_keys = {"plex": plex_keys, "jellyfin": jellyfin_keys, "emby": emby_keys}.get(tb, [])
+            if backend_keys:
+                try:
+                    new_pl_id = client.create_playlist(row["name"], backend_keys)
+                    if tb == "plex":
+                        with db.connection() as conn2:
+                            conn2.execute(
+                                "UPDATE managed_playlists SET plex_rating_key=? WHERE id=?",
+                                (new_pl_id, playlist_id),
+                            )
+                    elif tb == "jellyfin":
+                        with db.connection() as conn2:
+                            conn2.execute(
+                                "UPDATE managed_playlists SET jellyfin_playlist_id=? WHERE id=?",
+                                (new_pl_id, playlist_id),
+                            )
+                    else:
+                        db.set_emby_playlist_id(playlist_id, new_pl_id)
+                    if poster_url:
+                        client.set_playlist_image(new_pl_id, poster_url)
+                except Exception:
+                    log.warning("Failed to create franchise playlist on %s", tb, exc_info=True)
+    except Exception:
+        log.exception("Background initialization of franchise playlist %d failed", playlist_id)
 
 
 def sync_franchise_playlist(playlist_id: int, force: bool = False) -> tuple[int, int]:

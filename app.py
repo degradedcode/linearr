@@ -54,6 +54,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("app")
 
+_sched = None  # BackgroundScheduler set during app startup
+
 
 # --------------------------------------------------------------------------- #
 # Show aggregation across configured backends
@@ -630,7 +632,8 @@ def create_app() -> Flask:
     elif not db.get_setting("api_key"):
         db.set_setting("api_key", secrets.token_urlsafe(32))
 
-    scheduler.start()
+    global _sched
+    _sched = scheduler.start()
 
     # Make available_backends visible to all templates (used by the picker
     # and badges to decide what to render).
@@ -1578,6 +1581,16 @@ def create_app() -> Flask:
                 chronolists_id=chronolists_id,
                 franchise_name=franchise_name,
             )
+            # Schedule background initialization
+            try:
+                _sched.add_job(
+                    service._initialize_franchise_playlist_background,
+                    args=[playlist_id],
+                    id=f"init_franchise_{playlist_id}",
+                    replace_existing=True,
+                )
+            except Exception:
+                log.warning("Failed to schedule franchise playlist initialization", exc_info=True)
             return redirect(url_for("view_playlist", playlist_id=playlist_id))
         except Exception as e:
             log.warning("create_franchise_playlist failed: %s", e, exc_info=True)
