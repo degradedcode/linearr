@@ -122,7 +122,7 @@
 
     function fetchPreview(user, slug) {
       previewSect.hidden = false;
-      previewCont.innerHTML = '<p class="hint franchise-preview-summary">Loading preview…</p>';
+      previewCont.innerHTML = '<p class="hint franchise-preview-summary">📚 Scanning your library for matches (this may take a moment)…</p>';
       createBtn.disabled = true;
       if (editBtn) editBtn.disabled = true;
       var src = document.getElementById('hiddenFranchiseSource').value || 'trakt';

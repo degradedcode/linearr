@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ playlist.name }}{% endblock %}
 {% block content %}
+  <style>
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
   <a href="{{ url_for('index') }}" class="back">← All playlists</a>
 
   <div class="page-head">
@@ -59,6 +65,34 @@
       {% if not playlist.auto_sync %}· <strong>auto-update off</strong>{% endif %}
     </p>
   </div>
+
+  {% if playlist.playlist_type == 'franchise' and not playlist.franchise_definition_id %}
+    <div style="background: var(--bg-select); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; color: var(--text-muted);">
+      <span style="animation: spin 1s linear infinite; display: inline-block; margin-right: 0.5rem;">⚙️</span>
+      <strong>Initializing franchise playlist…</strong>
+      <br>
+      <span style="font-size: 0.9em;">Fetching franchise data and scanning your library. This may take a few minutes depending on your library size. The page will refresh automatically once complete.</span>
+    </div>
+    <script>
+      // Auto-refresh every 5 seconds until playlist is initialized
+      (function() {
+        var checkInterval = setInterval(function() {
+          fetch(window.location.href, {headers: {'Accept': 'text/html'}})
+            .then(r => r.text())
+            .then(html => {
+              var parser = new DOMParser();
+              var newDoc = parser.parseFromString(html, 'text/html');
+              var newStatus = newDoc.querySelector('[style*="Initializing"]');
+              if (!newStatus) {
+                // Playlist is initialized, reload
+                window.location.reload();
+              }
+            })
+            .catch(() => {}); // Ignore errors
+        }, 5000);
+      })();
+    </script>
+  {% endif %}
 
   {% if missing_on %}
     <div class="warning-banner">
