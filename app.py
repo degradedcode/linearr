@@ -1585,7 +1585,15 @@ def create_app() -> Flask:
             try:
                 _sched.add_job(
                     service._initialize_franchise_playlist_background,
-                    args=[playlist_id],
+                    args=[
+                        playlist_id,
+                        franchise_key,
+                        franchise_name,
+                        franchise_source,
+                        trakt_user,
+                        trakt_slug,
+                        chronolists_id,
+                    ],
                     id=f"init_franchise_{playlist_id}",
                     replace_existing=True,
                 )

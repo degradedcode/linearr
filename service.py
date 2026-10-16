@@ -2274,28 +2274,19 @@ def create_franchise_playlist(
 
     db._validate_backend(backend)
 
-    definition_id = _fetch_and_store_franchise(
-        key=franchise_key,
-        name=franchise_name,
-        source=source,
-        trakt_user=trakt_user,
-        trakt_slug=trakt_slug,
-        chronolists_id=chronolists_id,
-    )
-
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with db.connection() as conn:
         cur = conn.execute(
             """INSERT INTO managed_playlists
-               (name, backend, playlist_type, franchise_definition_id,
+               (name, backend, playlist_type,
                 sort_mode, block_size, unwatched_only, auto_sync,
                 pruning_enabled, created_at)
-               VALUES (?, ?, 'franchise', ?, 'franchise', 1, 0, 1, 0, ?)""",
-            (name, backend, definition_id, now),
+               VALUES (?, ?, 'franchise', 'franchise', 1, 0, 1, 0, ?)""",
+            (name, backend, now),
         )
         playlist_id = cur.lastrowid
 
-    log.info("Created franchise playlist '%s' (id=%d); syncing in background", name, playlist_id)
+    log.info("Created franchise playlist '%s' (id=%d); fetching and syncing in background", name, playlist_id)
 
     try:
         _webhooks.fire(
@@ -2308,18 +2299,37 @@ def create_franchise_playlist(
     return playlist_id
 
 
-def _initialize_franchise_playlist_background(playlist_id: int) -> None:
+def _initialize_franchise_playlist_background(
+    playlist_id: int,
+    franchise_key: str,
+    franchise_name: str,
+    source: str = "trakt",
+    trakt_user: str | None = None,
+    trakt_slug: str | None = None,
+    chronolists_id: str | None = None,
+) -> None:
     row = db.get_playlist(playlist_id)
     if not row:
         log.warning("Franchise playlist %d not found", playlist_id)
         return
 
-    definition_id = row.get("franchise_definition_id")
-    if not definition_id:
-        log.warning("Franchise playlist %d has no definition_id", playlist_id)
-        return
-
     try:
+        definition_id = _fetch_and_store_franchise(
+            key=franchise_key,
+            name=franchise_name,
+            source=source,
+            trakt_user=trakt_user,
+            trakt_slug=trakt_slug,
+            chronolists_id=chronolists_id,
+        )
+
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE managed_playlists SET franchise_definition_id=? WHERE id=?",
+                (definition_id, playlist_id),
+            )
+
+        row = db.get_playlist(playlist_id)
         plex_keys, jellyfin_keys, emby_keys, missing_count = _match_franchise_to_library(
             definition_id, playlist_id, row
         )
